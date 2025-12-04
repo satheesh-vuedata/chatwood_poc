@@ -54,6 +54,8 @@ _conversation_to_user: dict[int, str] = {}  # conversation_id -> user_id
 _pending_agent_messages: dict[str, list[dict]] = defaultdict(list)  # user_id -> [messages]
 # Track users for whom the bot has asked, "Do you want to talk to a human?"
 _awaiting_handoff_confirmation: set[str] = set()
+# Full transcript for each user, in order: [{"role": "user|assistant|agent|system", "content": str}, ...]
+_conversation_history: dict[str, list[dict]] = defaultdict(list)
 
 DEFAULT_USER_ID = "web-user"  # Single-user POC
 
@@ -387,6 +389,51 @@ def user_declines_handoff(text: str) -> bool:
     return normalized in negatives
 
 
+def add_history_entry(user_id: str, role: str, content: str) -> None:
+    """
+    Append a single conversational turn to the in-memory transcript.
+
+    role is one of: "user", "assistant", "agent", "system".
+    """
+    cleaned = (content or "").strip()
+    if not cleaned:
+        return
+    _conversation_history[user_id].append(
+        {
+            "role": role,
+            "content": cleaned,
+        }
+    )
+
+
+def build_conversation_summary(user_id: str) -> str:
+    """
+    Build a plain-text transcript for Chatwoot so the human agent
+    can see the full context as the first message.
+    """
+    history = _conversation_history.get(user_id) or []
+    if not history:
+        return "User started a conversation, but there is no previous transcript."
+
+    role_labels = {
+        "user": "User",
+        "assistant": "Bot",
+        "agent": "Human agent",
+        "system": "System",
+    }
+
+    lines: list[str] = []
+    for item in history:
+        role = role_labels.get(item.get("role", "user"), "User")
+        content = item.get("content", "")
+        if not content:
+            continue
+        lines.append(f"{role}: {content}")
+
+    header = "Conversation so far (share with human agent):"
+    return header + "\n" + "\n".join(lines)
+
+
 @app.post("/toggle-human")
 async def toggle_human_mode(payload: HumanToggleRequest, request: Request):
     """
@@ -444,7 +491,10 @@ async def receive_message(data: UserMessageRequest, request: Request):
     
     if not message.strip():
         return {"status": "error", "message": "Empty message"}
-    
+
+    # Always record the user's message in the transcript.
+    add_history_entry(user_id, "user", message)
+
     global _human_mode
 
     if _human_mode:
@@ -481,6 +531,11 @@ async def receive_message(data: UserMessageRequest, request: Request):
             try:
                 conversation_id = get_or_create_chatwoot_conversation(user_id)
                 logger.info("✅ Conversation ready after confirmation: conversation_id=%s", conversation_id)
+
+                # Build and send the full transcript as the very first message
+                # into Chatwoot so the human agent sees all prior context.
+                transcript = build_conversation_summary(user_id)
+                send_message_to_chatwoot(conversation_id, transcript)
             except Exception as exc:
                 logger.exception("❌ Failed to prepare Chatwoot conversation after confirmation: %s", exc)
                 # Even if Chatwoot fails, stay in bot mode so the user is not stuck.
@@ -492,16 +547,11 @@ async def receive_message(data: UserMessageRequest, request: Request):
                     "human_mode": _human_mode,
                 }
 
-            # Tell the user we've switched them over; their *next* messages
-            # will actually be routed to the human.
-            reply = (
-                "Okay, I’ll connect you to a human agent now. "
-                "Your next messages will go straight to them."
-            )
             return {
-                "status": "bot",
-                "route": "bot",
-                "reply": reply,
+                "status": "forwarded",
+                "route": "human",
+                "conversation_id": conversation_id,
+                "message": "Conversation history sent to human agent in Chatwoot.",
                 "human_mode": _human_mode,
             }
 
@@ -509,6 +559,7 @@ async def receive_message(data: UserMessageRequest, request: Request):
             logger.info("User %s declined human handoff; staying in bot mode.", user_id)
             _awaiting_handoff_confirmation.discard(user_id)
             reply = "No problem — I’ll keep helping you here as the bot. How else can I assist you?"
+            add_history_entry(user_id, "assistant", reply)
             return {
                 "status": "bot",
                 "route": "bot",
@@ -535,17 +586,22 @@ async def receive_message(data: UserMessageRequest, request: Request):
             "If that’s right, please reply with “yes” and I’ll connect you. "
             "If not, you can reply “no” to keep chatting with me."
         )
+        add_history_entry(user_id, "assistant", reply)
         return {
             "status": "bot",
             "route": "bot",
             "reply": reply,
             "human_mode": _human_mode,
+            # Hint to the frontend that it can render quick-action buttons
+            # instead of relying solely on free-text yes/no replies.
+            "human_handoff_confirmation": True,
         }
 
     # Default: pure bot reply.
     logger.info("🤖 BOT MODE: Generating standard bot reply")
     reply = generate_bot_response(message)
     logger.info("Bot reply: %s", reply[:50])
+    add_history_entry(user_id, "assistant", reply)
 
     return {
         "status": "bot",
@@ -620,6 +676,7 @@ async def chatwoot_webhook(request: Request):
         user_id = _conversation_to_user.get(conversation_id)
         if user_id:
             logger.info("✅ Queueing agent reply for user=%s: %s", user_id, content[:50] if content else content)
+            add_history_entry(user_id, "agent", content or "")
             _pending_agent_messages[user_id].append({
                 "content": content,
                 "conversation_id": conversation_id,

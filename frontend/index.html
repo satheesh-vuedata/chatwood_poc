@@ -362,6 +362,36 @@
             background: rgba(59,130,246,0.16);
             border: 1px solid rgba(59,130,246,0.7);
         }
+
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 6px 2px 2px;
+        }
+
+        .quick-btn {
+            border-radius: var(--radius-pill);
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 11px;
+            padding: 6px 10px;
+            cursor: pointer;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .quick-btn.primary {
+            border-color: #2563eb;
+            color: #1d4ed8;
+            background: #eff6ff;
+        }
+
+        .quick-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -490,8 +520,9 @@
             humanIndicator.classList.toggle("off", !humanMode);
         }
 
-        function sendUserMessage() {
-            const text = messageInput.value.trim();
+        function sendUserMessage(forcedText) {
+            const raw = forcedText != null ? forcedText : messageInput.value;
+            const text = (raw || "").trim();
             if (!text) {
                 return;
             }
@@ -519,6 +550,9 @@
                     }
                     if (data.route === "bot" && data.reply) {
                         appendChatMessage("bot", data.reply, new Date().toISOString());
+                        if (data.human_handoff_confirmation) {
+                            showHumanHandoffButtons();
+                        }
                     } else if (data.route === "human") {
                         appendChatMessage(
                             "system",
@@ -564,39 +598,39 @@
         // Start polling
         setInterval(pollForAgentReplies, 2000);
 
-        function requestHumanModeChange(desired) {
-            if (desired === humanMode) {
-                return;
+        function showHumanHandoffButtons() {
+            const container = document.createElement("div");
+            container.classList.add("quick-actions");
+
+            const yesBtn = document.createElement("button");
+            yesBtn.type = "button";
+            yesBtn.classList.add("quick-btn", "primary");
+            yesBtn.textContent = "Yes, connect me to a human";
+
+            const noBtn = document.createElement("button");
+            noBtn.type = "button";
+            noBtn.classList.add("quick-btn");
+            noBtn.textContent = "No, keep chatting with the bot";
+
+            function disableButtons() {
+                yesBtn.disabled = true;
+                noBtn.disabled = true;
             }
 
-            const confirmText = desired
-                ? "Do you want to switch to a human agent? New messages will be sent to a human in Chatwoot."
-                : "Do you want to end the human conversation and switch back to the bot?";
+            yesBtn.addEventListener("click", function () {
+                disableButtons();
+                sendUserMessage("yes");
+            });
 
-            if (!window.confirm(confirmText)) {
-                return;
-            }
+            noBtn.addEventListener("click", function () {
+                disableButtons();
+                sendUserMessage("no");
+            });
 
-            fetch("/toggle-human", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ enabled: desired })
-            })
-                .then((res) => res.json())
-                .then((data) => {
-                    const enabled = !!data.human_mode;
-                    setHumanModeUI(enabled);
-                    const msg = enabled
-                        ? "Human mode enabled. User messages will be routed to a connected agent."
-                        : "Human mode disabled. Bot will respond to new messages.";
-                    appendChatMessage("system", msg, new Date().toISOString());
-                })
-                .catch((err) => {
-                    console.error("Failed to toggle human mode:", err);
-                    appendChatMessage("system", "Failed to toggle human mode.", new Date().toISOString());
-                });
+            container.appendChild(yesBtn);
+            container.appendChild(noBtn);
+            chatLogInner.appendChild(container);
+            chatLog.scrollTop = chatLog.scrollHeight;
         }
 
         // Wire up UI events.
