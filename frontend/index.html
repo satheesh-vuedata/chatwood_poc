@@ -137,47 +137,6 @@
             background: var(--danger);
         }
 
-        .human-toggle {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            padding: 3px;
-            border-radius: 999px;
-            background: #e5e7eb;
-            border: 1px solid #d1d5db;
-            cursor: pointer;
-            color: var(--text);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            gap: 6px;
-        }
-
-        .human-toggle.off {
-            background: #e5e7eb;
-            border-color: #d1d5db;
-        }
-
-        .human-toggle-knob {
-            width: 18px;
-            height: 18px;
-            border-radius: 999px;
-            background: #ffffff;
-            transform: translateX(0);
-            transition: transform 0.18s ease-out, background 0.18s ease-out;
-            box-shadow: 0 1px 2px rgba(15,23,42,0.15);
-        }
-
-        .human-toggle.off .human-toggle-knob {
-            background: #ffffff;
-            transform: translateX(20px);
-            box-shadow: 0 1px 2px rgba(15,23,42,0.15);
-        }
-
-        .human-toggle-label {
-            padding: 2px 10px 2px 8px;
-        }
-
         .main-grid {
             flex: 1;
             display: block;
@@ -416,14 +375,10 @@
             </div>
         </div>
         <div class="status-group">
-            <div id="human-indicator" class="human-indicator off">
+            <div id="human-indicator" class="human-indicator off" aria-live="polite">
                 <div class="human-dot"></div>
                 <span id="human-indicator-label">Human Mode: OFF</span>
             </div>
-            <button id="human-toggle-btn" class="human-toggle off" type="button">
-                <div class="human-toggle-knob"></div>
-                <span class="human-toggle-label">Human</span>
-            </button>
         </div>
     </header>
 
@@ -467,8 +422,6 @@
         const chatLog = document.getElementById("chat-log");
         const messageInput = document.getElementById("message-input");
         const sendBtn = document.getElementById("send-btn");
-
-        const humanToggleBtn = document.getElementById("human-toggle-btn");
         const humanIndicator = document.getElementById("human-indicator");
         const humanIndicatorLabel = document.getElementById("human-indicator-label");
 
@@ -535,7 +488,6 @@
             const modeText = humanMode ? "Human Mode: ON" : "Human Mode: OFF";
             humanIndicatorLabel.textContent = modeText;
             humanIndicator.classList.toggle("off", !humanMode);
-            humanToggleBtn.classList.toggle("off", !humanMode);
         }
 
         function sendUserMessage() {
@@ -562,6 +514,9 @@
             })
                 .then((res) => res.json())
                 .then((data) => {
+                    if (typeof data.human_mode === "boolean") {
+                        setHumanModeUI(data.human_mode);
+                    }
                     if (data.route === "bot" && data.reply) {
                         appendChatMessage("bot", data.reply, new Date().toISOString());
                     } else if (data.route === "human") {
@@ -609,9 +564,19 @@
         // Start polling
         setInterval(pollForAgentReplies, 2000);
 
-        function toggleHumanMode() {
-            // POST /toggle-human with the desired state.
-            const desired = !humanMode;
+        function requestHumanModeChange(desired) {
+            if (desired === humanMode) {
+                return;
+            }
+
+            const confirmText = desired
+                ? "Do you want to switch to a human agent? New messages will be sent to a human in Chatwoot."
+                : "Do you want to end the human conversation and switch back to the bot?";
+
+            if (!window.confirm(confirmText)) {
+                return;
+            }
+
             fetch("/toggle-human", {
                 method: "POST",
                 headers: {
@@ -643,8 +608,6 @@
             }
         });
 
-        humanToggleBtn.addEventListener("click", toggleHumanMode);
-
         // Initial bootstrapping.
         setHumanModeUI(false);
         sendBtn.disabled = false;
@@ -652,5 +615,3 @@
 </script>
 </body>
 </html>
-
-

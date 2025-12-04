@@ -52,6 +52,8 @@ _human_mode: bool = False
 _user_conversations: dict[str, int] = {}  # user_id -> chatwoot_conversation_id
 _conversation_to_user: dict[int, str] = {}  # conversation_id -> user_id
 _pending_agent_messages: dict[str, list[dict]] = defaultdict(list)  # user_id -> [messages]
+# Track users for whom the bot has asked, "Do you want to talk to a human?"
+_awaiting_handoff_confirmation: set[str] = set()
 
 DEFAULT_USER_ID = "web-user"  # Single-user POC
 
@@ -67,7 +69,16 @@ app.add_middleware(
 
 
 class HumanToggleRequest(BaseModel):
+    """
+    Payload for explicitly switching a user between bot and human.
+
+    In the current POC we only have a single user (`DEFAULT_USER_ID`),
+    but we keep `user_id` here so this endpoint matches the UI flow:
+    "this specific user requested to talk to a human".
+    """
+
     enabled: bool
+    user_id: str = DEFAULT_USER_ID
 
 
 class UserMessageRequest(BaseModel):
@@ -309,6 +320,73 @@ def generate_bot_response(user_text: str) -> str:
         return f"Hello! How can I assist you today?"
 
 
+def _normalize_text(text: str) -> str:
+    return (text or "").strip().lower()
+
+
+def user_seems_to_request_human(text: str) -> bool:
+    """
+    Heuristic check: does the user expression look like
+    they want to talk to a human?
+    """
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    keywords = [
+        "human",
+        "agent",
+        "real person",
+        "live person",
+        "live agent",
+        "customer care",
+        "support team",
+        "talk to someone",
+        "speak to someone",
+        "speak to a person",
+        "talk to a person",
+    ]
+    for kw in keywords:
+        if kw in normalized:
+            return True
+    return False
+
+
+def user_confirms_handoff(text: str) -> bool:
+    """
+    Detect simple yes/affirmative confirmations.
+    """
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    affirmatives = {
+        "yes",
+        "y",
+        "yeah",
+        "yep",
+        "ok",
+        "okay",
+        "sure",
+        "please",
+        "please do",
+        "connect me",
+    }
+    return normalized in affirmatives or normalized.startswith("yes ")
+
+
+def user_declines_handoff(text: str) -> bool:
+    """
+    Detect simple no/negative confirmations.
+    """
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    negatives = {"no", "n", "nope", "not now", "never mind"}
+    return normalized in negatives
+
+
 @app.post("/toggle-human")
 async def toggle_human_mode(payload: HumanToggleRequest, request: Request):
     """
@@ -317,7 +395,13 @@ async def toggle_human_mode(payload: HumanToggleRequest, request: Request):
     Body: {"enabled": true/false}
     """
     client_host = request.client.host if request.client else "unknown"
-    logger.info("Human mode toggle requested from %s: enabled=%s", client_host, payload.enabled)
+    user_id = payload.user_id or DEFAULT_USER_ID
+    logger.info(
+        "Human mode toggle requested from %s for user=%s: enabled=%s",
+        client_host,
+        user_id,
+        payload.enabled,
+    )
     global _human_mode
     _human_mode = bool(payload.enabled)
     logger.info("Human mode is now %s", _human_mode)
@@ -352,7 +436,7 @@ async def receive_message(data: UserMessageRequest, request: Request):
     - If human mode is OFF: generate bot reply and return it
     - If human mode is ON: send to Chatwoot and return confirmation
     """
-    user_id = data.user_id
+    user_id = data.user_id or DEFAULT_USER_ID
     message = data.message
     
     client_host = request.client.host if request.client else "unknown"
@@ -361,6 +445,8 @@ async def receive_message(data: UserMessageRequest, request: Request):
     if not message.strip():
         return {"status": "error", "message": "Empty message"}
     
+    global _human_mode
+
     if _human_mode:
         # HUMAN MODE: Send to Chatwoot
         logger.info("🙋 HUMAN MODE: Forwarding message to Chatwoot")
@@ -381,17 +467,92 @@ async def receive_message(data: UserMessageRequest, request: Request):
                 "status": "error",
                 "message": f"Failed to send to Chatwoot: {str(e)}"
             }
-    else:
-        # BOT MODE: Generate reply
-        logger.info("🤖 BOT MODE: Generating bot reply")
-        reply = generate_bot_response(message)
-        logger.info("Bot reply: %s", reply[:50])
-        
+    # BOT MODE (no active human handoff yet)
+    logger.info("🤖 BOT MODE: Processing message")
+
+    # If we've already asked this user whether they want a human, interpret
+    # this message as their confirmation (yes/no).
+    if user_id in _awaiting_handoff_confirmation:
+        if user_confirms_handoff(message):
+            logger.info("User %s confirmed human handoff; enabling human mode.", user_id)
+            _awaiting_handoff_confirmation.discard(user_id)
+            _human_mode = True
+
+            try:
+                conversation_id = get_or_create_chatwoot_conversation(user_id)
+                logger.info("✅ Conversation ready after confirmation: conversation_id=%s", conversation_id)
+            except Exception as exc:
+                logger.exception("❌ Failed to prepare Chatwoot conversation after confirmation: %s", exc)
+                # Even if Chatwoot fails, stay in bot mode so the user is not stuck.
+                _human_mode = False
+                return {
+                    "status": "error",
+                    "route": "bot",
+                    "message": "Tried to connect you to a human agent, but something went wrong.",
+                    "human_mode": _human_mode,
+                }
+
+            # Tell the user we've switched them over; their *next* messages
+            # will actually be routed to the human.
+            reply = (
+                "Okay, I’ll connect you to a human agent now. "
+                "Your next messages will go straight to them."
+            )
+            return {
+                "status": "bot",
+                "route": "bot",
+                "reply": reply,
+                "human_mode": _human_mode,
+            }
+
+        if user_declines_handoff(message):
+            logger.info("User %s declined human handoff; staying in bot mode.", user_id)
+            _awaiting_handoff_confirmation.discard(user_id)
+            reply = "No problem — I’ll keep helping you here as the bot. How else can I assist you?"
+            return {
+                "status": "bot",
+                "route": "bot",
+                "reply": reply,
+                "human_mode": _human_mode,
+            }
+
+        # If the user replied with something ambiguous, clear the pending
+        # confirmation and continue in bot mode with a normal reply.
+        logger.info(
+            "User %s sent ambiguous response while awaiting confirmation; "
+            "clearing confirmation flag and continuing in bot mode.",
+            user_id,
+        )
+        _awaiting_handoff_confirmation.discard(user_id)
+
+    # If the user seems to explicitly ask for a human, ask for confirmation
+    # in the conversational flow instead of toggling immediately.
+    if user_seems_to_request_human(message):
+        logger.info("User %s appears to be requesting a human agent; asking for confirmation.", user_id)
+        _awaiting_handoff_confirmation.add(user_id)
+        reply = (
+            "It sounds like you’d like to talk to a human agent. "
+            "If that’s right, please reply with “yes” and I’ll connect you. "
+            "If not, you can reply “no” to keep chatting with me."
+        )
         return {
             "status": "bot",
             "route": "bot",
-            "reply": reply
+            "reply": reply,
+            "human_mode": _human_mode,
         }
+
+    # Default: pure bot reply.
+    logger.info("🤖 BOT MODE: Generating standard bot reply")
+    reply = generate_bot_response(message)
+    logger.info("Bot reply: %s", reply[:50])
+
+    return {
+        "status": "bot",
+        "route": "bot",
+        "reply": reply,
+        "human_mode": _human_mode,
+    }
 
 
 @app.post("/webhook/chatwoot")
