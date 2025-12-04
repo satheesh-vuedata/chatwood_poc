@@ -415,26 +415,44 @@ async def chatwoot_webhook(request: Request):
         return {"status": "error", "message": "Invalid JSON"}
     
     logger.info("📨 Webhook from %s: event=%s", client_host, payload.get("event"))
-    logger.debug("Full webhook payload: %s", payload)
-    
+    logger.info("🔍 FULL WEBHOOK PAYLOAD: %s", payload)  # Log entire payload
+
     event = payload.get("event")
     if event != "message_created":
         logger.info("Ignoring non-message_created event: %s", event)
         return {"status": "ignored"}
-    
-    # Extract message details
-    message = payload.get("message", {})
-    message_type = message.get("message_type")  # 0 = incoming, 1 = outgoing (agent)
-    content = message.get("content", "")
-    
-    conversation = payload.get("conversation", {})
+
+    # ----- Normalize payload shape -------------------------------------------------
+    # Chatwoot webhook docs show both of these shapes:
+    # 1) Top-level fields:
+    #    { event, id, content, message_type, conversation, ... }
+    # 2) Nested message object:
+    #    { event, message: { content, message_type, ... }, conversation: {...}, ... }
+    #
+    # To be robust, treat `message` (if present) as the source of truth,
+    # otherwise fall back to top-level fields.
+    # ------------------------------------------------------------------------------
+    raw_message = payload.get("message") or payload
+
+    message_type = raw_message.get("message_type")  # 0 = incoming (customer), 1 = outgoing (agent)
+    content = raw_message.get("content", "")
+
+    conversation = payload.get("conversation") or raw_message.get("conversation") or {}
     conversation_id = conversation.get("id")
-    
-    logger.info("Message details: type=%s, conversation_id=%s, content=%s", message_type, conversation_id, content[:30] if content else "")
-    
-    # Only process AGENT replies (message_type == 1)
-    # Note: Chatwoot uses integers: 0 = incoming (customer), 1 = outgoing (agent)
-    if message_type == 1:
+
+    logger.info(
+        "Message details (normalised): type=%s, conversation_id=%s, content=%s",
+        message_type,
+        conversation_id,
+        content[:30] if content else "",
+    )
+
+    # Only process AGENT replies.
+    # Chatwoot may send:
+    #   - integer 1 for agent message_type
+    #   - string "outgoing" in some payloads
+    # We'll treat both as agent replies.
+    if message_type == 1 or message_type == "outgoing":
         logger.info("👤 Agent reply detected")
         
         # Find the user for this conversation
