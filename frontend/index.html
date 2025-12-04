@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Real-Time Chatbot POC</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        :root {
+            --bg: #f3f4f6;
+            --panel: #ffffff;
+            --panel-alt: #f9fafb;
+            --accent: #2563eb;
+            --accent-soft: rgba(37, 99, 235, 0.08);
+            --danger: #dc2626;
+            --danger-soft: rgba(220, 38, 38, 0.08);
+            --text: #111827;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+            --user-msg: #2563eb;
+            --bot-msg: #047857;
+            --agent-msg: #7c3aed;
+            --system-msg: #6b7280;
+            --radius-lg: 14px;
+            --radius-md: 10px;
+            --radius-pill: 999px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 24px 12px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .app-shell {
+            width: 100%;
+            max-width: 840px;
+            min-height: 520px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            border-radius: 18px;
+            padding: 16px 18px 14px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: 0 14px 40px rgba(15,23,42,0.12);
+        }
+
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(148,163,184,0.35);
+        }
+
+        .title-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-circle {
+            width: 30px;
+            height: 30px;
+            border-radius: 999px;
+            background: radial-gradient(circle at 30% 30%, #2563eb, #1d4ed8 50%, #2563eb 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 0 1px rgba(37,99,235,0.25);
+            font-size: 17px;
+            color: #eff6ff;
+            font-weight: 700;
+        }
+
+        .title-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .title-text h1 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        .title-text span {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .status-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .human-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: var(--radius-pill);
+            background: var(--accent-soft);
+            border: 1px solid rgba(37,99,235,0.25);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+
+        .human-indicator.off {
+            background: var(--danger-soft);
+            border-color: rgba(220,38,38,0.25);
+        }
+
+        .human-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: none;
+        }
+
+        .human-indicator.off .human-dot {
+            background: var(--danger);
+        }
+
+        .human-toggle {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            padding: 3px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            border: 1px solid #d1d5db;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            gap: 6px;
+        }
+
+        .human-toggle.off {
+            background: #e5e7eb;
+            border-color: #d1d5db;
+        }
+
+        .human-toggle-knob {
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            background: #ffffff;
+            transform: translateX(0);
+            transition: transform 0.18s ease-out, background 0.18s ease-out;
+            box-shadow: 0 1px 2px rgba(15,23,42,0.15);
+        }
+
+        .human-toggle.off .human-toggle-knob {
+            background: #ffffff;
+            transform: translateX(20px);
+            box-shadow: 0 1px 2px rgba(15,23,42,0.15);
+        }
+
+        .human-toggle-label {
+            padding: 2px 10px 2px 8px;
+        }
+
+        .main-grid {
+            flex: 1;
+            display: block;
+            padding-top: 10px;
+            min-height: 0;
+        }
+
+        .panel {
+            display: flex;
+            flex-direction: column;
+            background: var(--panel-alt);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+            padding: 12px 12px 10px;
+            min-height: 0;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-header h2 {
+            margin: 0;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: #111827;
+        }
+
+        .panel-header span {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .chat-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 4px 8px 2px;
+            margin-top: 4px;
+            border-radius: 12px;
+            background: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(148,163,184,0.04);
+        }
+
+        .chat-log-inner {
+            padding-right: 4px;
+        }
+
+        .message {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            margin-bottom: 6px;
+        }
+
+        .message.system {
+            align-items: center;
+            font-size: 11px;
+        }
+
+        .bubble {
+            max-width: 82%;
+            padding: 7px 9px 6px;
+            border-radius: 14px;
+            font-size: 13px;
+            line-height: 1.4;
+            border: 1px solid rgba(209,213,219,0.9);
+            backdrop-filter: none;
+            box-shadow: none;
+        }
+
+        .bubble.user {
+            margin-left: auto;
+            border-radius: 14px 14px 4px 14px;
+            background: #2563eb;
+            border-color: #2563eb;
+            color: #f9fafb;
+        }
+
+        .bubble.bot {
+            border-radius: 14px 14px 14px 4px;
+            background: #f9fafb;
+            border-color: rgba(209,213,219,0.9);
+        }
+
+        .bubble.agent {
+            border-radius: 14px 14px 14px 4px;
+            background: #ecfdf3;
+            border-color: rgba(34,197,94,0.6);
+        }
+
+        .bubble.system {
+            max-width: 100%;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            border-color: rgba(209,213,219,0.9);
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .meta-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 2px;
+            padding: 0 1px;
+            font-size: 11px;
+        }
+
+        .sender-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+
+        .sender-pill {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+        }
+
+        .sender-pill.user {
+            background: var(--user-msg);
+            box-shadow: 0 0 10px rgba(37,99,235,0.9);
+        }
+
+        .sender-pill.bot {
+            background: var(--bot-msg);
+            box-shadow: 0 0 10px rgba(129,140,248,0.9);
+        }
+
+        .sender-pill.agent {
+            background: var(--agent-msg);
+            box-shadow: 0 0 10px rgba(34,197,94,0.9);
+        }
+
+        .sender-pill.system {
+            background: var(--system-msg);
+            box-shadow: 0 0 8px rgba(148,163,184,0.9);
+        }
+
+        .timestamp {
+            font-size: 10px;
+            color: var(--muted);
+        }
+
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-top: 8px;
+            margin-top: 2px;
+            border-top: 1px solid var(--border);
+        }
+
+        .input-row input[type="text"] {
+            flex: 1;
+            padding: 9px 12px;
+            border-radius: var(--radius-pill);
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+        }
+
+        .input-row input[type="text"]::placeholder {
+            color: var(--muted);
+        }
+
+        .btn {
+            border-radius: var(--radius-pill);
+            border: 1px solid #2563eb;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 12px;
+            padding: 8px 14px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-icon {
+            font-size: 13px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+        }
+
+        .pill.bot {
+            background: rgba(129,140,248,0.14);
+            border: 1px solid rgba(129,140,248,0.6);
+        }
+
+        .pill.agent {
+            background: rgba(34,197,94,0.16);
+            border: 1px solid rgba(34,197,94,0.7);
+        }
+
+        .pill.user {
+            background: rgba(59,130,246,0.16);
+            border: 1px solid rgba(59,130,246,0.7);
+        }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <header class="app-header">
+        <div class="title-group">
+            <div class="logo-circle">C</div>
+            <div class="title-text">
+                <h1>Chat Handoff POC</h1>
+                <span>FastAPI · Webhooks · Human / Bot routing</span>
+            </div>
+        </div>
+        <div class="status-group">
+            <div id="human-indicator" class="human-indicator off">
+                <div class="human-dot"></div>
+                <span id="human-indicator-label">Human Mode: OFF</span>
+            </div>
+            <button id="human-toggle-btn" class="human-toggle off" type="button">
+                <div class="human-toggle-knob"></div>
+                <span class="human-toggle-label">Human</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="main-grid">
+        <!-- User chat panel -->
+        <section class="panel" aria-label="User chat">
+            <div class="panel-header">
+                <div>
+                    <h2>User Chat</h2>
+                    <span>Send a message and watch the bot / human agent respond.</span>
+                </div>
+                <div class="pill user">
+                    <span class="sender-pill user"></span>
+                    <span>End User</span>
+                </div>
+            </div>
+
+            <div class="chat-log" id="chat-log" aria-live="polite">
+                <div class="chat-log-inner" id="chat-log-inner"></div>
+            </div>
+
+            <div class="input-row">
+                <input
+                    id="message-input"
+                    type="text"
+                    placeholder="Type a message and press Enter…"
+                    autocomplete="off"
+                />
+                <button id="send-btn" class="btn" type="button">
+                    <span class="btn-icon">➤</span>
+                    <span>Send</span>
+                </button>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+    (function () {
+        const chatLogInner = document.getElementById("chat-log-inner");
+        const chatLog = document.getElementById("chat-log");
+        const messageInput = document.getElementById("message-input");
+        const sendBtn = document.getElementById("send-btn");
+
+        const humanToggleBtn = document.getElementById("human-toggle-btn");
+        const humanIndicator = document.getElementById("human-indicator");
+        const humanIndicatorLabel = document.getElementById("human-indicator-label");
+
+        let humanMode = false;
+
+        function formatTime(iso) {
+            try {
+                const date = iso ? new Date(iso) : new Date();
+                return date.toLocaleTimeString(undefined, {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                });
+            } catch {
+                return "";
+            }
+        }
+
+        function appendChatMessage(sender, text, timestampIso, isUserLocal = false) {
+            const container = document.createElement("div");
+            container.classList.add("message");
+
+            const senderKey = sender || "system";
+            const isSystem = senderKey === "system";
+            const isUser = senderKey === "user" || isUserLocal;
+            const kind = isSystem ? "system" : (senderKey === "bot" ? "bot" : (senderKey === "agent" ? "agent" : "system"));
+
+            const meta = document.createElement("div");
+            meta.classList.add("meta-row");
+
+            const senderLabel = document.createElement("div");
+            senderLabel.classList.add("sender-label");
+            const dot = document.createElement("span");
+            dot.classList.add("sender-pill", kind);
+            const labelText = document.createElement("span");
+            labelText.textContent = isUser ? "You" : (kind === "bot" ? "Bot" : (kind === "agent" ? "Human Agent" : "System"));
+            senderLabel.appendChild(dot);
+            senderLabel.appendChild(labelText);
+
+            const timestamp = document.createElement("span");
+            timestamp.classList.add("timestamp");
+            timestamp.textContent = formatTime(timestampIso);
+
+            meta.appendChild(senderLabel);
+            meta.appendChild(timestamp);
+
+            const bubble = document.createElement("div");
+            bubble.classList.add("bubble");
+            bubble.classList.add(isSystem ? "system" : (isUser ? "user" : kind));
+            bubble.textContent = text;
+
+            if (isSystem) {
+                container.classList.add("system");
+            }
+
+            container.appendChild(meta);
+            container.appendChild(bubble);
+            chatLogInner.appendChild(container);
+
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        function setHumanModeUI(enabled) {
+            humanMode = !!enabled;
+            const modeText = humanMode ? "Human Mode: ON" : "Human Mode: OFF";
+            humanIndicatorLabel.textContent = modeText;
+            humanIndicator.classList.toggle("off", !humanMode);
+            humanToggleBtn.classList.toggle("off", !humanMode);
+        }
+
+        function sendUserMessage() {
+            const text = messageInput.value.trim();
+            if (!text) {
+                return;
+            }
+
+            // Render the user's message locally.
+            appendChatMessage("user", text, new Date().toISOString(), true);
+
+            // Send to the new /message endpoint
+            const payload = {
+                user_id: "web-user",
+                message: text
+            };
+
+            fetch("/message", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (data.route === "bot" && data.reply) {
+                        appendChatMessage("bot", data.reply, new Date().toISOString());
+                    } else if (data.route === "human") {
+                        appendChatMessage(
+                            "system",
+                            "✅ Message sent to Chatwoot. Agent will reply shortly.",
+                            new Date().toISOString()
+                        );
+                    } else if (data.status === "error") {
+                        appendChatMessage(
+                            "system",
+                            "❌ Error: " + (data.message || "Unknown error"),
+                            new Date().toISOString()
+                        );
+                    }
+                })
+                .catch((err) => {
+                    console.error("Failed to send message:", err);
+                    appendChatMessage(
+                        "system",
+                        "❌ Failed to send message.",
+                        new Date().toISOString()
+                    );
+                });
+
+            messageInput.value = "";
+            messageInput.focus();
+        }
+
+        // Poll for human agent replies every 2 seconds
+        async function pollForAgentReplies() {
+            try {
+                const res = await fetch("/poll-human-messages?user_id=web-user");
+                const data = await res.json();
+                if (data.messages && data.messages.length > 0) {
+                    data.messages.forEach(msg => {
+                        appendChatMessage("agent", msg.content, new Date().toISOString());
+                    });
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+            }
+        }
+
+        // Start polling
+        setInterval(pollForAgentReplies, 2000);
+
+        function toggleHumanMode() {
+            // POST /toggle-human with the desired state.
+            const desired = !humanMode;
+            fetch("/toggle-human", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ enabled: desired })
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    const enabled = !!data.human_mode;
+                    setHumanModeUI(enabled);
+                    const msg = enabled
+                        ? "Human mode enabled. User messages will be routed to a connected agent."
+                        : "Human mode disabled. Bot will respond to new messages.";
+                    appendChatMessage("system", msg, new Date().toISOString());
+                })
+                .catch((err) => {
+                    console.error("Failed to toggle human mode:", err);
+                    appendChatMessage("system", "Failed to toggle human mode.", new Date().toISOString());
+                });
+        }
+
+        // Wire up UI events.
+        sendBtn.addEventListener("click", sendUserMessage);
+        messageInput.addEventListener("keydown", function (evt) {
+            if (evt.key === "Enter" && !evt.shiftKey) {
+                evt.preventDefault();
+                sendUserMessage();
+            }
+        });
+
+        humanToggleBtn.addEventListener("click", toggleHumanMode);
+
+        // Initial bootstrapping.
+        setHumanModeUI(false);
+        sendBtn.disabled = false;
+    })();
+</script>
+</body>
+</html>
+
+
