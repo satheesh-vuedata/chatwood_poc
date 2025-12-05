@@ -1,5 +1,18 @@
 ## Real-Time Chatbot POC (FastAPI + Webhooks)
 
+sample env:
+OPENAI_API_KEY=" "
+# Optional: override default model
+OPENAI_MODEL=gpt-4o-mini
+
+
+CHATWOOT_BASE_URL=
+CHATWOOT_API_TOKEN=
+CHATWOOT_ACCOUNT_ID=
+CHATWOOT_INBOX_ID=
+
+
+
 This project is a small **proof of concept** for a chatbot system with **bot ↔ human handoff**, using a
 **Chatwoot-style webhook** instead of WebSockets.
 

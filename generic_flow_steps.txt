@@ -1,0 +1,76 @@
+Step-by-step flow (generic, clear text)
+
+1. User opens your app
+   - User sees a chat box in your product (messages list + input + send button).
+
+2. User sends a message
+   - Frontend:
+     - Shows the user’s message immediately.
+     - Sends POST /chat/message to your backend with { user_id, message }.
+
+3. Backend stores and decides
+   - Backend saves the message in a simple history for that user_id.
+   - Backend checks a flag human_mode for that user:
+     - If human_mode == false → handle with bot.
+     - If human_mode == true → handle with human (Chatwoot).
+
+4. Bot handling (human_mode = false)
+   - If the message does NOT look like “I want a human”:
+     - Backend calls your bot (LLM / simple logic).
+     - Backend returns { route: "bot", reply, human_mode: false }.
+     - Frontend shows the reply as a Bot message.
+   - If the message does look like “I want a human”:
+     - Backend returns a question: “Do you want to talk to a human? yes/no”.
+     - Frontend shows that bot message plus Yes/No buttons.
+
+5. User confirms or cancels human handoff
+   - If user says Yes (button or text):
+     - Backend:
+       - Creates or finds a Chatwoot contact and conversation for this user.
+       - Sends a text summary of the previous chat to Chatwoot.
+       - Sets human_mode = true for that user.
+       - Returns { route: "human", human_mode: true }.
+     - Frontend:
+       - Updates UI to show Human Mode: ON and a system note like “Connected to human agent”.
+   - If user says No:
+     - Backend sends a normal bot reply and leaves human_mode = false.
+
+6. Explicit “Talk to human” button (optional)
+   - Frontend has a “Talk to human” button.
+   - On click, it calls POST /chat/connect-human.
+   - Backend:
+     - Does the same as step 5 (create conversation, send transcript, set human_mode = true).
+   - Frontend updates to Human Mode: ON.
+
+7. Forwarding user messages to Chatwoot (human_mode = true)
+   - User sends a new message while in human mode.
+   - Backend:
+     - Uses the saved Chatwoot conversation_id for that user.
+     - POSTs the message to Chatwoot as incoming.
+     - Returns { route: "human", human_mode: true }.
+   - Frontend shows a small system message like “Sent to human agent”.
+
+8. Agent replies in Chatwoot
+   - Agent reads messages in the Chatwoot inbox and types a reply.
+   - Chatwoot calls your backend webhook: POST /chat/webhook (you configure this in Chatwoot).
+   - Backend:
+     - Checks that this is an agent message.
+     - Finds which user_id is linked to this conversation_id.
+     - Stores the agent reply in a “pending messages” list for that user_id.
+
+9. Frontend polls for human replies
+   - Every few seconds, frontend calls GET /chat/poll?user_id=....
+   - Backend:
+     - Returns all pending agent replies for that user and clears them.
+   - Frontend:
+     - Shows these as “Human Agent” messages.
+
+10. Resetting the chat (optional)
+    - Frontend “Clear chat” button calls POST /chat/clear.
+    - Backend:
+      - Clears history and pending messages for that user.
+      - Sets human_mode = false.
+    - Frontend:
+      - Empties the chat window and shows a system note: “Chat cleared, you’re now chatting with the bot.”
+
+

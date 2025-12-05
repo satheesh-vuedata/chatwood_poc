@@ -88,6 +88,12 @@ class UserMessageRequest(BaseModel):
     message: str
 
 
+class UserOnlyRequest(BaseModel):
+    """Simple payload used for endpoints that only need a user_id."""
+
+    user_id: str = DEFAULT_USER_ID
+
+
 def chatwoot_headers() -> dict:
     """Headers for Chatwoot API requests."""
     return {
@@ -471,6 +477,78 @@ async def human_status():
     Useful for debugging and demos.
     """
     return {
+        "human_mode": _human_mode,
+    }
+
+
+@app.post("/connect-human-now")
+async def connect_human_now(payload: UserOnlyRequest, request: Request):
+    """
+    Explicitly switch this user to human mode and push the full transcript
+    into Chatwoot as the first message.
+
+    This is used by the header hamburger menu for a direct handoff,
+    without requiring a yes/no free-text confirmation in the chat.
+    """
+    global _human_mode
+
+    client_host = request.client.host if request.client else "unknown"
+    user_id = payload.user_id or DEFAULT_USER_ID
+    logger.info("Direct human connect requested from %s for user=%s", client_host, user_id)
+
+    try:
+        conversation_id = get_or_create_chatwoot_conversation(user_id)
+        transcript = build_conversation_summary(user_id)
+        send_message_to_chatwoot(conversation_id, transcript)
+
+        _human_mode = True
+        logger.info(
+            "✅ Direct human connect complete for user=%s, conversation_id=%s",
+            user_id,
+            conversation_id,
+        )
+
+        return {
+            "status": "forwarded",
+            "route": "human",
+            "conversation_id": conversation_id,
+            "message": "Conversation history sent to human agent in Chatwoot.",
+            "human_mode": _human_mode,
+        }
+    except Exception as exc:
+        logger.exception("❌ Direct human connect failed for user=%s: %s", user_id, exc)
+        return {
+            "status": "error",
+            "message": "Failed to connect you to a human agent.",
+            "human_mode": _human_mode,
+        }
+
+
+@app.post("/clear-chat")
+async def clear_chat(payload: UserOnlyRequest, request: Request):
+    """
+    Clear the in-memory transcript and any pending state for this user.
+
+    This is triggered from the UI hamburger menu "Clear chat" option.
+    It also resets human mode back to bot.
+    """
+    global _human_mode
+
+    client_host = request.client.host if request.client else "unknown"
+    user_id = payload.user_id or DEFAULT_USER_ID
+    logger.info("Clear chat requested from %s for user=%s", client_host, user_id)
+
+    # Reset per-user state
+    _conversation_history.pop(user_id, None)
+    _pending_agent_messages.pop(user_id, None)
+    _awaiting_handoff_confirmation.discard(user_id)
+
+    # Go back to bot mode for a fresh start
+    _human_mode = False
+
+    logger.info("Chat cleared for user=%s; human_mode reset to False.", user_id)
+    return {
+        "status": "cleared",
         "human_mode": _human_mode,
     }
 
